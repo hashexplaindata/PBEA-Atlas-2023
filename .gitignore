@@ -1,0 +1,8 @@
+/.idea/
+/.Rhistory
+/.RData
+/.Ruserdata
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store
