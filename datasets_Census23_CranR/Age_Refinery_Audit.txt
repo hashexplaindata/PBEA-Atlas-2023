@@ -1,9 +1,0 @@
-======= AGE REFINERY AUDIT =======
-Total Districts Processed: 136
-Districts with Missing Dependency Ratio: 0
-
-SAMPLE ROW (ISLAMABAD / ICT):
-# A tibble: 1 x 7
-  District Age_TotalPop Under15 Age_15_29 Age_30_64 Age_65_Plus Dependency_Ratio
-  <chr>           <dbl>   <dbl>     <dbl>     <dbl>       <dbl>            <dbl>
-1 ICT           2363863       0    590966   1674897       98000           0.0433

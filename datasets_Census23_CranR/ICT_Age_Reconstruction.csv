@@ -1,3 +1,0 @@
-District,Age_TotalPop,Under_15,Age_15_24_exact,Age_15_29_est,Age_30_64_est,Age_65_plus,Ratio_15_29,Source_Method
-Rawalpindi,6058540,2018679,1104561,1514763,2243315,281783,0.2500211932247703,R-source SLII_Age_Bulge (algebraic derivation + uniform 25-49 assumption)
-ICT,2363863,787629,NA,591016,875275,109943,0.2500211932247703,Rawalpindi 15-29 ratio applied to ICT total

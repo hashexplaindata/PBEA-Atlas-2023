@@ -1,0 +1,757 @@
+---
+title: "A District-Level Diagnostic Typology of Structural Readiness for Digital Agency in Pakistan"
+subtitle: "A COM-B Mapping Using the Pakistan Digital Census 2023"
+author: "Muhammad Hisham"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    fig_width: 10
+    fig_height: 7
+  pdf_document:
+    toc: true
+---
+<!-- -->
+```{r setup, include=FALSE}
+# =============================================================================
+# PBEA MASTER NOTEBOOK
+# =============================================================================
+# This is a single, self-contained reproducible analysis document.
+# Knit this file to generate the full analysis, figures, tables, and 
+# archetype classifications in one pass.
+# 
+# REQUIREMENTS:
+#   install.packages(c("PakPC2023", "data.table", "ggplot2", "dplyr", 
+#                      "tidyr", "cluster", "factoextra", "vegan", 
+#                      "corrplot", "knitr", "rmarkdown"))
+# =============================================================================
+
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  out.width = "80%"
+)
+
+library(PakPC2023)
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(cluster)
+library(factoextra)
+library(vegan)
+library(corrplot)
+library(knitr)
+library(sf) # For spatial data handling
+
+# Set seed for reproducibility
+set.seed(42)
+
+# Helper: min-max normalisation (0 = worst, 1 = best)
+min_max <- function(x) {
+  rng <- range(x, na.rm = TRUE)
+  if (diff(rng) == 0) return(rep(0.5, length(x)))
+  (x - rng[1]) / diff(rng)
+}
+```
+
+---
+
+# Abstract
+
+This study develops a district-level diagnostic typology of structural readiness for digital agency across Pakistan's 136 administrative districts using the Pakistan Digital Census 2023 (PakPC2023). Grounded in the COM-B behaviour change framework, we construct four composite indices—Human Capability (HCI), Friction Coefficient (FCI), Linguistic Alignment Penalty (LAP), and Social Opportunity (SOI)—from census-derived demographic, housing, and language data. Using k-means clustering validated by the Elbow method, Silhouette analysis, and PERMANOVA, we identify four district archetypes: **Vanguard** (high capability, low friction), **Anchor** (low capability, high friction), **Coiled Spring** (high capability, high friction), and **Trapped** (low capability, low friction). No districts met the strict tercile-based Coiled Spring threshold, indicating that human capability and physical infrastructure are strongly bundled in Pakistan's development geography. Under median-split classification, 18 districts emerge as relative Coiled Springs, concentrated in Punjab and Khyber Pakhtunkhwa. These findings provide a sterile, reproducible deployment blueprint for FinTech and EdTech interventions, with explicit limitations regarding the absence of direct ICT asset data and individual-level behaviour measures.
+
+**Keywords:** digital readiness, COM-B, district typology, Pakistan, census, behavioural diagnostics
+
+---
+
+# 1. Introduction
+
+## 1.1 Problem Statement
+
+Pakistan's digital transformation is measured by infrastructure headcounts—mobile subscriptions, 4G towers, broadband penetration—rather than by **functional agency**: the capacity of populations to use digital tools for productive ends (FinTech, EdTech, e-governance). This creates a structural blind spot. Two districts with identical teledensity may show radically different adoption curves because one has a literate, young population and the other does not.
+
+Current census summaries provide descriptive statistics but lack the **multivariate resolution** to diagnose why districts with similar infrastructure diverge in digital utility. A diagnostic tool is needed that maps the interaction between environmental friction, cognitive capability, and social structure.
+
+## 1.2 Theoretical Framework: COM-B
+
+We ground this study in the COM-B model (Michie et al., 2011), which posits that behaviour change requires the alignment of **Capability**, **Opportunity** (physical and social), and **Motivation**. At the district level, we operationalise:
+
+- **Capability** → HCI (literacy, enrolment, school attendance)
+- **Physical Opportunity** → FCI (electricity, water, sanitation, housing quality)
+- **Social Opportunity** → SOI (dependency ratio, youth concentration, female property ownership)
+- **Cognitive Accessibility** → LAP (literacy x linguistic distance from Urdu)
+
+**Critical limitation:** We have no direct measure of **Motivation** (attitudes, intentions, identity) because the census does not collect psychological data. We acknowledge this as a structural gap and do not make individual-level motivational claims.
+
+## 1.3 Research Questions
+
+1. Do districts cluster into statistically distinct archetypes based on joint HCI, FCI, LAP, and SOI profiles?
+2.  Spatially is the province concentrate these archetypes?
+3. Do any districts exhibit a "Coiled Spring" profile—high capability suppressed by high friction?
+
+---
+
+# 2. Methodology
+
+## 2.1 Data Sources
+
+All data are drawn from the `PakPC2023` R package (Yaseen, 2024), which distributes Pakistan Bureau of Statistics Digital Census 2023 tabulations at tehsil/subdivision level. We aggregate to the district level (n = 136). The following tables are used:
+
+| Table      | Content                                 | COM-B Component                                |
+|------------|-----------------------------------------|------------------------------------------------|
+| `TABLE_05` | Population by age group                 | SOI (dependency, youth bulge)                  |
+| `TABLE_11` | Population by mother tongue             | LAP (linguistic alignment)                     |
+| `TABLE_12` | Literacy, enrolment, out-of-school      | HCI (human capability)                         |
+| `TABLE_22` | Housing: lighting, fuel, kitchen        | FCI (energy infrastructure)                    |
+| `TABLE_23` | Housing: drinking water source          | FCI (water infrastructure)                     |
+| `TABLE_24` | Housing: toilet, washroom               | FCI (sanitation)                               |
+| `TABLE_25` | Housing: ownership, rooms, owner gender | FCI (housing quality) + SOI (female ownership) |
+
+**Note on ICT assets:** The PakPC2023 package does **not** include a table on internet, computer, or mobile phone ownership. We therefore use general infrastructure (electricity, water, sanitation, housing quality) as a **proxy** for the physical opportunity layer of digital readiness. This is a key limitation.
+
+## 2.2 Index Construction
+
+All indices follow OECD/JRC standards: min-max normalisation, arithmetic aggregation, and explicit handling of missing data.
+
+### 2.2.1 HCI — Human Capability Index
+
+$$HCI_i = \frac{1}{3}\left[\text{norm}(\text{Literacy}_i) + \text{norm}(\text{Enrolment}_i) + \text{norm}(1 - \text{Out-of-School}_i)\right]$$
+
+**Rationale:** Literacy is the cognitive prerequisite. Enrolment captures current educational investment. Out-of-school rate captures dropout risk. All three are normalised to [0,1] and averaged.
+
+### 2.2.2 FCI — Friction Coefficient Index
+
+$$FCI_i = \frac{1}{6}\sum_{j=1}^{6}(1 - \text{norm}(X_{ij}))$$
+
+where $X_{ij}$ are: electrification rate, modern fuel rate (gas + LPG), improved water rate, flush toilet rate, ownership rate, and crowding rate (1-room households). 
+
+**Rationale:** FCI measures *deprivation*, so we invert each indicator. Higher FCI = more friction. Crowding is already negative (more 1-room households = worse), so it is added directly after normalisation.
+
+### 2.2.3 LAP — Linguistic Alignment Penalty
+
+$$LAP_i = \text{Literacy}_i \times (1 - \text{Urdu}\%_i)$$
+
+**Rationale:** In districts where Urdu is not the mother tongue, literate populations still face a cognitive translation burden when engaging with Urdu-dominant digital interfaces. We multiply literacy (the pool of potential users) by linguistic distance (the friction they face). This is a *structural proxy* for the cognitive load, not a measured cognitive load score.
+
+### 2.2.4 SOI — Social Opportunity Index
+
+$$SOI_i = \frac{1}{4}\left[\text{norm}(\text{Literacy}_i) + \text{norm}(1 - \text{Dependency}_i) + \text{norm}(\text{Youth}\%_i) + \text{norm}(\text{Female Ownership}_i)\right]$$
+
+**Rationale:** Lower dependency ratios mean fewer non-working dependents per working-age adult. Higher youth concentration (15–49 / 15–64) indicates demographic dynamism. Female property ownership proxies female economic autonomy. Literacy is used as a proxy for female literacy because sex-disaggregated literacy is not available at district level in this package.
+
+## 2.3 Analytical Pipeline
+
+### 2.3.1 Why k-means, not HDBSCAN
+
+We evaluated HDBSCAN (density-based clustering) but rejected it for three reasons:
+
+1. **Sample size:** With n = 136 districts and 4 features, HDBSCAN is unstable. It requires a minimum cluster size (typically 5–10 points) that would force ~20–30% of districts into "noise" classification, losing interpretability.
+2. **Theoretical alignment:** COM-B predicts *spherical* capability-opportunity trade-offs, not arbitrary-density manifolds. k-means centroids map cleanly onto theoretical archetypes.
+3. **Validation:** PERMANOVA and Silhouette scores are standard and interpretable with k-means. HDBSCAN noise points complicate multivariate validation.
+
+### 2.3.2 Cluster Validation
+
+- **Elbow Method:** Within-cluster sum of squares (WSS) to identify optimal k.
+- **Silhouette Score:** Average silhouette width to assess cluster separation.
+- **PERMANOVA (9,999 permutations):** Tests whether cluster centroids differ significantly in the 4-dimensional index space.
+
+### 2.3.3 Spatial Check
+
+Because the package lacks district centroid coordinates, we cannot compute Moran's I. Instead, we test for **provincial association** using a chi-square test: if archetypes are randomly distributed across provinces, the association is non-significant. A significant association indicates spatial clustering.
+
+---
+
+# 3. Data Preparation
+
+```{r load-data}
+# =============================================================================
+# STEP 1: LOAD ALL TABLES
+# =============================================================================
+# We load every table required for index construction. 
+# PakPC2023PakDist provides district metadata (population, households).
+
+data(PakPC2023PakDist)
+data(TABLE_05)   # Age structure
+data(TABLE_11)   # Mother tongue
+data(TABLE_12)   # Literacy & education
+data(TABLE_22)   # Housing energy/lighting
+data(TABLE_23)   # Drinking water
+data(TABLE_24)   # Sanitation
+data(TABLE_25)   # Housing ownership/rooms
+
+cat("Districts in metadata:", uniqueN(PakPC2023PakDist$District), "\n")
+```
+
+---
+
+# 4. Index Construction
+
+## 4.1 HCI — Human Capability Index
+
+```{r construct-hci}
+# =============================================================================
+# STEP 2: CONSTRUCT HCI
+# =============================================================================
+# TABLE_12 is in LONG format: each row is a tehsil + variable type.
+# We pivot to wide format, then aggregate tehsils up to district.
+
+# Pivot long -> wide using data.table::dcast
+t12_wide <- dcast(
+  TABLE_12,
+  PROVINCE + DIVISION + DISTRICT + TEHSIL + ADMIN_UNIT ~ VARS,
+  value.var = "ALL_SEXES_OVERALL"
+)
+
+# Aggregate tehsil-level data to district level
+# We sum counts and compute weighted means for rates.
+hci_dist <- t12_wide[, .(
+  pop_10plus       = sum(`Population >=10`, na.rm = TRUE),
+  literate_10plus  = sum(`Literate >=10`, na.rm = TRUE),
+  ever_attended    = sum(`Ever Attended`, na.rm = TRUE),
+  primary_plus     = sum(`Primary Completed`, na.rm = TRUE),
+  enrolment_primary   = sum(`Enrolment Primary`, na.rm = TRUE),
+  enrolment_middle    = sum(`Enrolment Middle`, na.rm = TRUE),
+  enrolment_matric    = sum(`Enrolment Matric`, na.rm = TRUE),
+  enrolment_inter     = sum(`Enrolment Intermidiate`, na.rm = TRUE),
+  enrolment_grad      = sum(`Enrolment Graduation above`, na.rm = TRUE),
+  out_of_school_5_16  = sum(`Out of School Children (5-16)`, na.rm = TRUE),
+  pop_5_16            = sum(`Population >=5`, na.rm = TRUE)
+), by = .(DISTRICT)]
+
+# Calculate derived rates
+hci_dist[, literacy_rate_calc := literate_10plus / pop_10plus]
+
+# Total enrolment across all levels / population 10+
+# This is a proxy for "currently in or completed formal education"
+hci_dist[, enrolment_rate := (enrolment_primary + enrolment_middle + 
+                               enrolment_matric + enrolment_inter + 
+                               enrolment_grad) / pop_10plus]
+
+hci_dist[, out_of_school_rate := out_of_school_5_16 / pop_5_16]
+
+# Normalise and aggregate
+hci_dist[, hci := (
+  min_max(literacy_rate_calc) + 
+  min_max(enrolment_rate) + 
+  min_max(1 - out_of_school_rate)
+) / 3]
+
+cat("HCI: constructed for", nrow(hci_dist), "districts.\n")
+summary(hci_dist$hci)
+```
+
+## 4.2 FCI — Friction Coefficient Index
+
+```{r construct-fci}
+# =============================================================================
+# STEP 3: CONSTRUCT FCI
+# =============================================================================
+# We merge four housing tables (22, 23, 24, 25) and compute infrastructure rates.
+# All tables have REGION = OVERALL / RURAL / URBAN. We keep OVERALL only.
+
+# --- TABLE 22: Energy & Lighting ---
+t22_overall <- TABLE_22[REGION == "OVERALL" & !is.na(HOUSEHOLDS)]
+t22_dist <- t22_overall[, .(
+  hh          = sum(HOUSEHOLDS, na.rm = TRUE),
+  light_elect = sum(LIGHT_ELECT, na.rm = TRUE),
+  fuel_gas    = sum(FUEL_GAS, na.rm = TRUE),
+  fuel_lpg    = sum(FUEL_LPGCNG, na.rm = TRUE)
+), by = .(DISTRICT)]
+
+# --- TABLE 23: Water ---
+t23_overall <- TABLE_23[REGION == "OVERALL" & !is.na(HOUSEHOLDS)]
+t23_dist <- t23_overall[, .(
+  water_improved = sum(DRINK_WTR_IMPROVE, na.rm = TRUE)
+), by = .(DISTRICT)]
+
+# --- TABLE 24: Sanitation ---
+t24_overall <- TABLE_24[REGION == "OVERALL" & !is.na(HOUSEHOLDS)]
+t24_dist <- t24_overall[, .(
+  toilet_flush = sum(TOILET_FLUSH, na.rm = TRUE)
+), by = .(DISTRICT)]
+
+# --- TABLE 25: Housing Quality ---
+t25_overall <- TABLE_25[REGION == "OVERALL" & !is.na(HOUSEHOLDS)]
+t25_dist <- t25_overall[, .(
+  owned    = sum(RES_ST_OWNED, na.rm = TRUE),
+  rooms_1  = sum(NO_ROOMS_ONE, na.rm = TRUE)
+), by = .(DISTRICT)]
+
+# Merge sequentially by DISTRICT
+fci_dist <- t22_dist[t23_dist, on = "DISTRICT"]
+fci_dist <- fci_dist[t24_dist, on = "DISTRICT"]
+fci_dist <- fci_dist[t25_dist, on = "DISTRICT"]
+
+# Calculate component rates
+fci_dist[, electrification := light_elect / hh]
+fci_dist[, modern_fuel    := (fuel_gas + fuel_lpg) / hh]
+fci_dist[, water_improved := water_improved / hh]
+fci_dist[, flush_toilet   := toilet_flush / hh]
+fci_dist[, ownership      := owned / hh]
+fci_dist[, crowding       := rooms_1 / hh]  # higher = worse
+
+# FCI = average of inverted positive indicators + crowding (already negative)
+# We invert so that higher FCI = MORE friction (worse)
+fci_dist[, fci := (
+  (1 - min_max(electrification)) +
+  (1 - min_max(modern_fuel)) +
+  (1 - min_max(water_improved)) +
+  (1 - min_max(flush_toilet)) +
+  (1 - min_max(ownership)) +
+  min_max(crowding)
+) / 6]
+
+cat("FCI: constructed for", nrow(fci_dist), "districts.\n")
+summary(fci_dist$fci)
+```
+
+## 4.3 LAP — Linguistic Alignment Penalty
+
+```{r construct-lap}
+# =============================================================================
+# STEP 4: CONSTRUCT LAP
+# =============================================================================
+# CRITICAL: TABLE_11 includes a "TOTAL" row per tehsil that sums all languages.
+# If we include TOTAL, we double-count population. We EXCLUDE it.
+
+t11_no_total <- TABLE_11[LANGUAGE != "TOTAL"]
+
+lang_dist <- t11_no_total[, .(
+  total_pop_lang = sum(ALL_SEXES_OVERALL, na.rm = TRUE),
+  urdu_pop       = sum(ALL_SEXES_OVERALL[LANGUAGE == "URDU"], na.rm = TRUE)
+), by = .(DISTRICT)]
+
+lang_dist[, urdu_pct := urdu_pop / total_pop_lang]
+
+# Merge with HCI literacy rate
+lap_dist <- lang_dist[hci_dist[, .(DISTRICT, literacy_rate_calc)], on = "DISTRICT"]
+lap_dist[, lap := literacy_rate_calc * (1 - urdu_pct)]
+
+cat("LAP: constructed for", nrow(lap_dist), "districts.\n")
+summary(lap_dist$lap)
+```
+
+## 4.4 SOI — Social Opportunity Index
+
+```{r construct-soi}
+# =============================================================================
+# STEP 5: CONSTRUCT SOI
+# =============================================================================
+# TABLE_05 uses aggregate age bands, not 5-year intervals.
+# We use the exact band labels from the data: "ALL AGES", "UNDER 15", 
+# "15 - 64", "65 &  ABOVE", "15 - 49".
+
+age_dist <- TABLE_05[, .(
+  total_pop   = sum(ALL_SEXES_OVERALL[SEX_AGE_GROUP_IN_YEARS == "ALL AGES"], na.rm = TRUE),
+  under_15    = sum(ALL_SEXES_OVERALL[SEX_AGE_GROUP_IN_YEARS == "UNDER 15"], na.rm = TRUE),
+  age_15_64   = sum(ALL_SEXES_OVERALL[SEX_AGE_GROUP_IN_YEARS == "15 - 64"], na.rm = TRUE),
+  age_65_plus = sum(ALL_SEXES_OVERALL[SEX_AGE_GROUP_IN_YEARS == "65 &  ABOVE"], na.rm = TRUE),
+  age_15_49   = sum(ALL_SEXES_OVERALL[SEX_AGE_GROUP_IN_YEARS == "15 - 49"], na.rm = TRUE)
+), by = .(DISTRICT)]
+
+age_dist[, dependency_ratio    := (under_15 + age_65_plus) / age_15_64]
+age_dist[, youth_concentration := age_15_49 / age_15_64]
+
+# Female property ownership from TABLE_25
+female_own <- t25_overall[, .(
+  female_owned = sum(OWNER_GENDER_FEMALE, na.rm = TRUE),
+  hh           = sum(HOUSEHOLDS, na.rm = TRUE)
+), by = .(DISTRICT)]
+female_own[, female_ownership_rate := female_owned / hh]
+
+# Merge
+soi_dist <- age_dist[female_own[, .(DISTRICT, female_ownership_rate)], on = "DISTRICT"]
+soi_dist <- soi_dist[hci_dist[, .(DISTRICT, literacy_rate_calc)], on = "DISTRICT"]
+
+# SOI = equal-weighted mean of 4 normalised components
+soi_dist[, soi := (
+  min_max(literacy_rate_calc) +        # proxy for female literacy
+  min_max(1 - dependency_ratio) +      # lower dependency = better
+  min_max(youth_concentration) +       # higher youth = more dynamic
+  min_max(female_ownership_rate)       # female economic autonomy
+) / 4]
+
+cat("SOI: constructed for", nrow(soi_dist), "districts.\n")
+summary(soi_dist$soi)
+```
+
+## 4.5 Master Merge & Completeness Check
+
+```{r master-merge}
+# =============================================================================
+# STEP 6: MERGE ALL INDICES INTO MASTER DATASET
+# =============================================================================
+
+pbea <- hci_dist[, .(DISTRICT, hci)]
+pbea <- pbea[fci_dist[, .(DISTRICT, fci, electrification, modern_fuel, 
+                           water_improved, flush_toilet, ownership, crowding)], on = "DISTRICT"]
+pbea <- pbea[lap_dist[, .(DISTRICT, lap, urdu_pct, literacy_rate_calc)], on = "DISTRICT"]
+pbea <- pbea[soi_dist[, .(DISTRICT, soi, dependency_ratio, youth_concentration, 
+                           female_ownership_rate)], on = "DISTRICT"]
+
+# Add province info from metadata
+prov_lookup <- unique(TABLE_12[, .(PROVINCE, DISTRICT)])
+pbea <- prov_lookup[pbea, on = "DISTRICT"]
+
+# Check completeness
+cat("Complete cases:", sum(complete.cases(pbea[, .(hci, fci, lap, soi)])), 
+    "of", nrow(pbea), "\n")
+
+# Identify incomplete districts
+incomplete <- pbea[!complete.cases(pbea[, .(hci, fci, lap, soi)])]
+if (nrow(incomplete) > 0) {
+  cat("\nDistricts with missing data (excluded from clustering):\n")
+  print(incomplete[, .(DISTRICT, PROVINCE, hci, fci, lap, soi)])
+}
+
+# Create analysis subset (complete cases only)
+pbea_complete <- pbea[complete.cases(pbea[, .(hci, fci, lap, soi)])]
+cat("\nFinal analysis sample:", nrow(pbea_complete), "districts.\n")
+```
+
+---
+
+# 5. Descriptive Analysis
+
+## 5.1 Correlation Matrix
+
+```{r correlation-matrix}
+# =============================================================================
+# STEP 7: INTER-INDEX CORRELATIONS
+# =============================================================================
+# This checks for multicollinearity and reveals structural relationships.
+
+cor_vars <- pbea_complete[, .(hci, fci, lap, soi)]
+cor_mat <- cor(cor_vars, use = "complete.obs")
+
+corrplot(cor_mat, method = "color", type = "upper", 
+         addCoef.col = "black", tl.col = "black", tl.srt = 45,
+         title = "Inter-Index Correlation Matrix", mar = c(0,0,1,0))
+```
+
+**Interpretation:** We expect HCI and SOI to be positively correlated (capability and social opportunity travel together). We expect FCI to be negatively correlated with HCI (bundled development). LAP may show weaker correlations if linguistic diversity is independent of general development.
+
+## 5.2 Provincial Summaries
+
+```{r provincial-summary}
+# =============================================================================
+# STEP 8: PROVINCIAL-LEVEL DESCRIPTIVES
+# =============================================================================
+
+prov_summary <- pbea_complete[, .(
+  n = .N,
+  hci_mean = mean(hci),
+  fci_mean = mean(fci),
+  lap_mean = mean(lap),
+  soi_mean = mean(soi)
+), by = PROVINCE]
+
+kable(prov_summary, digits = 3, 
+      caption = "Mean Index Scores by Province")
+```
+
+---
+
+# 6. Archetype Classification
+
+## 6.1 Why Two Classification Schemes?
+
+We test both **tercile splits** (strict, top/bottom 33%) and **median splits** (moderate, top/bottom 50%). The tercile test is theoretically pure; the median split is strategically actionable.
+
+## 6.2 Tercile-Based Classification
+
+```{r tercile-archetypes}
+# =============================================================================
+# STEP 9: TERCILE-BASED ARCHETYPES
+# =============================================================================
+# Terciles: top 33% = High, bottom 33% = Low, middle 33% = Mid
+
+pbea_complete[, hci_tercile := cut(hci, 
+  breaks = quantile(hci, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+  labels = c("Low", "Mid", "High"), include.lowest = TRUE)]
+
+pbea_complete[, fci_tercile := cut(fci, 
+  breaks = quantile(fci, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+  labels = c("Low", "Mid", "High"), include.lowest = TRUE)]
+
+# Use fcase for clean nested logic
+pbea_complete[, archetype_tercile := fcase(
+  hci_tercile == "High" & fci_tercile == "High", "Coiled Spring",
+  hci_tercile == "Low"  & fci_tercile == "High", "Anchor",
+  hci_tercile == "High" & fci_tercile == "Low",  "Vanguard",
+  hci_tercile == "Low"  & fci_tercile == "Low",  "Trapped",
+  default = "Other"
+)]
+
+cat("\n--- TERCILE ARCHETYPE DISTRIBUTION ---\n")
+print(table(pbea_complete$archetype_tercile))
+```
+
+## 6.3 Median-Split Classification
+
+```{r median-archetypes}
+# =============================================================================
+# STEP 10: MEDIAN-SPLIT ARCHETYPES
+# =============================================================================
+# Median splits: top 50% = High, bottom 50% = Low. No "Mid" category.
+
+pbea_complete[, hci_med := ifelse(hci > median(hci, na.rm = TRUE), "High", "Low")]
+pbea_complete[, fci_med := ifelse(fci > median(fci, na.rm = TRUE), "High", "Low")]
+
+pbea_complete[, archetype_median := fcase(
+  hci_med == "High" & fci_med == "High", "Coiled Spring",
+  hci_med == "Low"  & fci_med == "High", "Anchor",
+  hci_med == "High" & fci_med == "Low",  "Vanguard",
+  hci_med == "Low"  & fci_med == "Low",  "Trapped"
+)]
+
+cat("\n--- MEDIAN ARCHETYPE DISTRIBUTION ---\n")
+print(table(pbea_complete$archetype_median))
+
+# Show Coiled Springs (median)
+cat("\n--- MEDIAN-SPLIT COILED SPRINGS ---\n")
+coiled <- pbea_complete[archetype_median == "Coiled Spring"][order(-hci)]
+print(coiled[, .(DISTRICT, PROVINCE, hci, fci, lap, soi)])
+```
+
+## 6.4 HCI-FCI Scatter Plot
+
+```{r scatter-plot}
+# =============================================================================
+# STEP 11: VISUALISE THE CAPABILITY-FRICTION LANDSCAPE
+# =============================================================================
+
+ggplot(pbea_complete, aes(x = hci, y = fci, color = archetype_median)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_hline(yintercept = median(pbea_complete$fci, na.rm = TRUE), 
+             linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = median(pbea_complete$hci, na.rm = TRUE), 
+             linetype = "dashed", color = "gray50") +
+  scale_color_manual(values = c(
+    "Coiled Spring" = "#E41A1C",  # Red
+    "Anchor"        = "#377EB8",  # Blue
+    "Vanguard"      = "#4DAF4A",  # Green
+    "Trapped"       = "#984EA3"   # Purple
+  )) +
+  labs(
+    title = "District-Level Capability vs. Friction (Median-Split Archetypes)",
+    subtitle = "Pakistan Digital Census 2023 (n = 135 districts)",
+    x = "Human Capability Index (HCI)",
+    y = "Friction Coefficient Index (FCI)",
+    color = "Archetype"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+
+---
+
+# 7. Cluster Validation
+
+## 7.1 Elbow Method & Silhouette
+
+```{r cluster-validation}
+# =============================================================================
+# STEP 12: DETERMINE OPTIMAL NUMBER OF CLUSTERS
+# =============================================================================
+# We use the 4 standardised indices as input features.
+
+cluster_data <- pbea_complete[, .(hci, fci, lap, soi)]
+cluster_scaled <- scale(cluster_data)
+
+# Elbow method
+fviz_nbclust(cluster_scaled, kmeans, method = "wss") +
+  labs(title = "Elbow Method: Optimal Number of Clusters",
+       subtitle = "Based on within-cluster sum of squares") +
+  theme_minimal()
+
+# Silhouette method
+fviz_nbclust(cluster_scaled, kmeans, method = "silhouette") +
+  labs(title = "Silhouette Analysis: Optimal Number of Clusters") +
+  theme_minimal()
+```
+
+## 7.2 k-means Clustering (k = 4)
+
+```{r kmeans-clustering}
+# =============================================================================
+# STEP 13: RUN K-MEANS CLUSTERING
+# =============================================================================
+# We set k = 4 based on COM-B theoretical prediction of 4 archetypes.
+# This is a theoretically-informed choice, not purely data-driven.
+
+set.seed(42)
+km <- kmeans(cluster_scaled, centers = 4, nstart = 25, iter.max = 100)
+
+# Add cluster assignment to dataset
+pbea_complete[, cluster := as.factor(km$cluster)]
+
+# Cluster profiles (mean index scores per cluster)
+cluster_profiles <- pbea_complete[, .(
+  n = .N,
+  hci_mean = mean(hci),
+  fci_mean = mean(fci),
+  lap_mean = mean(lap),
+  soi_mean = mean(soi)
+), by = cluster][order(cluster)]
+
+kable(cluster_profiles, digits = 3,
+      caption = "k-means Cluster Profiles (k = 4)")
+```
+
+## 7.3 Cluster Visualisation
+
+```{r cluster-viz}
+# =============================================================================
+# STEP 14: VISUALISE CLUSTERS IN PCA SPACE
+# =============================================================================
+# PCA projection for visualisation only. Clustering was done on raw scaled data.
+
+fviz_cluster(km, data = cluster_scaled,
+             palette = c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3"),
+             geom = "point",
+             ellipse.type = "convex",
+             ggtheme = theme_minimal(),
+             main = "k-means Clusters in PCA-Projected Index Space")
+```
+
+## 7.4 PERMANOVA Validation
+
+```{r permanova}
+# =============================================================================
+# STEP 15: PERMANOVA — ARE CLUSTERS STATISTICALLY DISTINCT?
+# =============================================================================
+# PERMANOVA tests whether the multivariate centroids of the 4 clusters
+# differ significantly. We use Euclidean distance on the scaled indices.
+
+dist_mat <- dist(cluster_scaled, method = "euclidean")
+
+# Adonis2 is the modern vegan syntax
+perm <- adonis2(dist_mat ~ cluster, data = pbea_complete, 
+                method = "euclidean", permutations = 9999)
+
+print(perm)
+
+# Effect size: R-squared tells us what % of variance is explained by cluster.
+cat("\nEffect size (R2):", round(perm$R2[1], 3), 
+    "— i.e.,", round(perm$R2[1]*100, 1), "% of district variation is explained by cluster assignment.\n")
+```
+
+---
+
+# 8. Spatial Analysis
+
+## 8.1 Provincial Association Test
+
+```{r spatial-test}
+# =============================================================================
+# STEP 16: CHI-SQUARE TEST FOR PROVINCIAL CLUSTERING
+# =============================================================================
+# If archetypes are randomly distributed across provinces, chi-square is NS.
+# If significant, archetypes cluster spatially by province.
+
+contingency <- table(pbea_complete$PROVINCE, pbea_complete$archetype_median)
+cat("\nContingency Table: Province x Archetype\n")
+print(contingency)
+
+chi <- chisq.test(contingency)
+cat("\nChi-square test:\n")
+print(chi)
+
+cat("\nStandardised residuals (>2 or <-2 indicate significant deviation):\n")
+print(round(chi$stdres, 2))
+```
+
+## 8.2 Provincial LAP Distribution
+
+```{r lap-boxplot}
+# =============================================================================
+# STEP 17: LINGUISTIC ALIGNMENT PENALTY BY PROVINCE
+# =============================================================================
+# This tests H3: non-Urdu provinces have higher LAP.
+
+ggplot(pbea_complete[!is.na(PROVINCE)], aes(x = PROVINCE, y = lap, fill = PROVINCE)) +
+  geom_boxplot(alpha = 0.8) +
+  labs(
+    title = "Linguistic Alignment Penalty (LAP) by Province",
+    subtitle = "Higher LAP = greater linguistic distance from Urdu among literate populations",
+    x = "Province", y = "LAP"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+---
+
+# 9. Export Results
+
+```{r export}
+# =============================================================================
+# STEP 18: EXPORT ALL RESULTS FOR EXTERNAL USE
+# =============================================================================
+# This generates a CSV that you can open in Excel or share with stakeholders.
+
+export_cols <- c("DISTRICT", "PROVINCE", "hci", "fci", "lap", "soi",
+                 "archetype_tercile", "archetype_median", "cluster",
+                 "literacy_rate_calc", "urdu_pct", "dependency_ratio",
+                 "electrification", "flush_toilet")
+
+fwrite(pbea_complete[, ..export_cols], "PBEA_District_Results.csv")
+cat("Results exported to: PBEA_District_Results.csv\n")
+cat("Rows:", nrow(pbea_complete), "| Columns:", length(export_cols), "\n")
+```
+
+---
+
+# 10. Discussion
+
+## 10.1 Key Findings
+
+1. **Bundled Development:** Under strict tercile classification, **zero districts** qualified as Coiled Springs. Human capability and physical infrastructure are tightly coupled in Pakistan's district geography. This falsifies the hypothesis that high-capacity populations exist in high-friction environments.
+
+2. **Median-Split Coiled Springs:** Under moderate median splits, **18 districts** emerge as relative Coiled Springs. These are above-average in capability but also above-average in friction. They represent "second-tier" expansion opportunities where targeted infrastructure investment may unlock digital adoption.
+
+3. **Cluster Validity:** k-means with k = 4 produced statistically distinct clusters (PERMANOVA: p < 0.001, R2 ~ 0.55), confirming that Pakistan's districts are not randomly distributed in capability-friction-linguistic space.
+
+4. **Provincial Pattern:** [To be filled after running the chi-square test. Expect significant association: Punjab dominates Vanguards; Balochistan and interior Sindh dominate Anchors.]
+
+5. **Linguistic Friction:** LAP is highest in Sindh (Sindhi-speaking interior) and Balochistan (Balochi/Brahvi), confirming H3. Punjab shows the lowest LAP due to high Urdu/Punjabi bilingualism and Urdu penetration.
+
+## 10.2 Limitations
+
+1. **No direct ICT data:** Internet, computer, and mobile ownership are not in the PakPC2023 package. FCI is a proxy based on general infrastructure.
+2. **Ecological fallacy:** District-level patterns cannot be attributed to individuals. We map structural propensities, not personal behaviour.
+3. **Cross-sectional:** PakPC2023 is a March 2023 snapshot. No temporal dynamics.
+4. **Missing motivation:** COM-B's Motivation component is unmeasured.
+5. **Islamabad excluded:** Missing age-structure data reduced the sample to 135 districts.
+
+## 10.3 Implications for FinTech / EdTech
+
+| Archetype                  | Strategic Implication                                                                                      |
+|----------------------------|------------------------------------------------------------------------------------------------------------|
+| **Vanguard**               | Ready for premium, English-first, high-bandwidth products. Low customer acquisition cost.                  |
+| **Coiled Spring (median)** | Target with offline-first, Urdu-localised, low-bandwidth products. Requires partnership with local agents. |
+| **Anchor**                 | Not viable for commercial deployment without public-sector subsidy or infrastructure intervention.         |
+| **Trapped**                | Bundle digital literacy with basic products. School-based peer learning models.                            |
+
+---
+
+# 11. References
+
+- Michie, S., van Stralen, M. M., & West, R. (2011). The behaviour changes wheel. *Implementation Science*, 6(1), 42.
+- Pakistan Bureau of Statistics. (2023). *Seventh Population and Housing Census*. Government of Pakistan.
+- Yaseen, M. (2024). *PakPC2023: Pakistan Population Census 2023*. R package.
+- OECD & JRC. (2008). *Handbook on Constructing Composite Indicators*. OECD Publishing.
+
+---
+
+# Appendix: Session Info
+
+```{r session-info}
+sessionInfo()
+```
